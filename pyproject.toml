@@ -1,0 +1,50 @@
+[project]
+name = "netbox-cc-dayn"
+version = "0.1.0"
+description = "DayN-NetBox Bridge: enrich Cisco Catalyst Center Day-N template CSVs from NetBox"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.139.1",
+    "uvicorn==0.51.0",
+    "jinja2==3.1.6",
+    "pynetbox==7.8.0",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.2",
+    "pyyaml==6.0.3",
+    "python-multipart==0.0.32",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx==0.28.1",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "responses==0.26.2",
+    "ruff==0.15.21",
+    "mypy==2.3.0",
+    "types-PyYAML==6.0.12.20260518",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["pynetbox.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["app"]
