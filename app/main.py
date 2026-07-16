@@ -158,6 +158,13 @@ async def fill(request: Request, upload_id: str) -> HTMLResponse:
         client = NetBoxClient(settings)
         session.matches = match_devices(session.document.device_names(), client)
         _apply_device_picks(session, form)
+        client.prefetch_device_details(
+            [
+                int(m.record.id)
+                for m in session.matches.values()
+                if m.status == "matched" and m.record is not None
+            ]
+        )
         session.block_results = map_document_block_results(
             session.document.blocks, session.matches, load_mappings(), client
         )

@@ -52,11 +52,25 @@ class FakeNetBox:
         self.devices = devices
         self.request_count = 0
 
-    def install(self, rsps: responses.RequestsMock) -> None:
+    def install(self, rsps: responses.RequestsMock, with_details: bool = False) -> None:
         rsps.add_callback(
             responses.GET, f"{NETBOX_URL}/api/dcim/devices/", callback=self._devices_cb
         )
+        if with_details:
+            rsps.add_callback(
+                responses.GET, f"{NETBOX_URL}/api/dcim/interfaces/", callback=self._empty_cb
+            )
+            rsps.add_callback(
+                responses.GET,
+                f"{NETBOX_URL}/api/tenancy/contact-assignments/",
+                callback=self._empty_cb,
+            )
         rsps.add(responses.GET, f"{NETBOX_URL}/api/", json={}, headers={"API-Version": "4.1"})
+
+    def _empty_cb(self, request: Any) -> tuple[int, dict[str, str], str]:
+        self.request_count += 1
+        body = json.dumps({"count": 0, "next": None, "previous": None, "results": []})
+        return 200, {"Content-Type": "application/json"}, body
 
     def _devices_cb(self, request: Any) -> tuple[int, dict[str, str], str]:
         self.request_count += 1
