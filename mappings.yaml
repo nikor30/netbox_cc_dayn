@@ -1,0 +1,25 @@
+# csv_variable: how to resolve it from a matched NetBox device.
+#
+# `source` is either a dotted attribute path on the device record
+# (any None along the path -> the variable stays manual), one of the
+# special resolvers (`connected_device`, `device.primary_contact`),
+# or null for "no NetBox source known -> always manual".
+# Regions can add their own variables here without code changes —
+# see README.md ("Adding a new region field").
+
+site_full_name:
+  source: device.site.name
+building_room:
+  source: device.location.name        # NetBox "Location" = building/room
+rack_id:
+  source: device.rack.name
+device_role:
+  source: device.role.name            # pynetbox >= NetBox 3.6: .role (fallback .device_role)
+asset_id:
+  source: device.asset_tag
+support_contact:
+  source: device.primary_contact      # contact assignments; else tenant.name
+uplink_switch:
+  source: connected_device            # trace cables on uplinked interfaces
+patch_field:
+  source: null                        # no NetBox source known yet -> always manual
