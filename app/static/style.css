@@ -28,6 +28,23 @@ body {
 }
 .brand { color: #fff; font-weight: 700; text-decoration: none; font-size: 1.1rem; }
 .subtitle { opacity: 0.85; font-size: 0.85rem; }
+.nav-link { color: #fff; margin-left: auto; font-size: 0.9rem; }
+
+.settings-form { max-width: 34rem; }
+.settings-form h2 { font-size: 1rem; margin: 1.2rem 0 0.4rem; }
+.settings-form label { display: block; margin: 0.5rem 0; font-size: 0.9rem; }
+.settings-form input[type="url"],
+.settings-form input[type="text"],
+.settings-form input[type="password"] {
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin-top: 0.15rem;
+}
+.settings-form .checkbox input { width: auto; display: inline; }
+.settings-actions { display: flex; gap: 0.6rem; align-items: center; margin: 0.8rem 0; flex-wrap: wrap; }
 
 main { max-width: 1100px; margin: 1.2rem auto; padding: 0 1rem; }
 

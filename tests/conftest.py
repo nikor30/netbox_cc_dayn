@@ -2,7 +2,9 @@
 
 import json
 import os
+import tempfile
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -12,13 +14,27 @@ import responses
 NETBOX_URL = "https://netbox.test"
 
 # The FastAPI app reads settings at import time; make sure tests always see a
-# configured (mock) NetBox regardless of the developer's environment.
+# configured (mock) NetBox regardless of the developer's environment, and keep
+# runtime settings out of the working tree.
 os.environ["NETBOX_URL"] = NETBOX_URL
 os.environ["NETBOX_TOKEN"] = "test-token"
+os.environ["RUNTIME_SETTINGS_PATH"] = os.path.join(
+    tempfile.mkdtemp(prefix="dayn-test-"), "runtime_settings.json"
+)
 
 from app.config import Settings, get_settings  # noqa: E402
 
 get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def isolated_runtime_settings(tmp_path: Path) -> Iterator[None]:
+    """Give every test a fresh, empty runtime settings file."""
+    import app.main as main
+
+    main.runtime.set_path(tmp_path / "runtime_settings.json")
+    yield
+    main.runtime.set_path(tmp_path / "runtime_settings.json")
 
 
 @pytest.fixture

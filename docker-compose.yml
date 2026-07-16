@@ -7,7 +7,13 @@ services:
     env_file:
       - .env
     restart: unless-stopped
-    # mappings.yaml is baked into the image; mount your own to extend the
-    # variable mapping without rebuilding:
-    # volumes:
-    #   - ./mappings.yaml:/srv/mappings.yaml:ro
+    volumes:
+      # Persists settings saved in the GUI (NetBox URL/token, admin password)
+      # across container restarts.
+      - dayn-data:/srv/data
+      # mappings.yaml is baked into the image; mount your own to extend the
+      # variable mapping without rebuilding:
+      # - ./mappings.yaml:/srv/mappings.yaml:ro
+
+volumes:
+  dayn-data:

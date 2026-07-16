@@ -32,17 +32,40 @@ curl -f http://localhost:8070/healthz
 If NetBox is unreachable or unconfigured the tool still works — every variable
 simply becomes a manual field and a warning banner explains why.
 
+## Settings GUI (`/settings`)
+
+The NetBox connection can be configured entirely in the browser: open
+**Settings** in the top bar, enter the NetBox URL and API token, and hit
+**Test connection** — it performs a live check and reports the NetBox version
+(or the error). **Save settings** persists the values to
+`data/runtime_settings.json` (a Docker volume in the default compose file), and
+they override the environment variables immediately, no restart needed.
+
+The page is protected by a simple admin login (HTTP basic auth):
+
+- On first run no password exists — the page is open and shows a warning; set
+  the admin password right there (min. 8 characters, stored as a salted
+  PBKDF2 hash).
+- Alternatively set `ADMIN_USERNAME` / `ADMIN_PASSWORD` via environment; the
+  env password wins and can then not be changed in the GUI.
+
+The stored API token is write-only: it is never rendered back into the page or
+logged. Leaving the token field empty when saving keeps the stored one.
+
 ## Environment variables
 
-| Variable              | Default   | Description                                            |
-| --------------------- | --------- | ------------------------------------------------------ |
-| `NETBOX_URL`          | –         | Base URL of NetBox, e.g. `https://netbox.example.net`  |
-| `NETBOX_TOKEN`        | –         | API token. **Read-only is sufficient.**                |
-| `NETBOX_VERIFY_SSL`   | `true`    | Verify the NetBox TLS certificate                      |
-| `APP_PORT`            | `8070`    | Port for local `uvicorn` runs (container always 8070)  |
-| `LOG_LEVEL`           | `INFO`    | `DEBUG` / `INFO` / `WARNING` / `ERROR`                 |
-| `UPLOAD_MAX_BYTES`    | `2097152` | Upload size limit (2 MB)                               |
-| `SESSION_TTL_SECONDS` | `3600`    | How long parsed uploads stay in memory                 |
+| Variable                | Default                      | Description                                            |
+| ----------------------- | ---------------------------- | ------------------------------------------------------ |
+| `NETBOX_URL`            | –                            | Base URL of NetBox (GUI settings override this)        |
+| `NETBOX_TOKEN`          | –                            | API token. **Read-only is sufficient.**                |
+| `NETBOX_VERIFY_SSL`     | `true`                       | Verify the NetBox TLS certificate                      |
+| `ADMIN_USERNAME`        | `admin`                      | Login name for the settings page                       |
+| `ADMIN_PASSWORD`        | –                            | If set, fixes the admin password (GUI change disabled) |
+| `RUNTIME_SETTINGS_PATH` | `data/runtime_settings.json` | Where GUI-saved settings are persisted                 |
+| `APP_PORT`              | `8070`                       | Port for local `uvicorn` runs (container always 8070)  |
+| `LOG_LEVEL`             | `INFO`                       | `DEBUG` / `INFO` / `WARNING` / `ERROR`                 |
+| `UPLOAD_MAX_BYTES`      | `2097152`                    | Upload size limit (2 MB)                               |
+| `SESSION_TTL_SECONDS`   | `3600`                       | How long parsed uploads stay in memory                 |
 
 The token is never logged; uploads are kept in memory only and expire after the TTL.
 

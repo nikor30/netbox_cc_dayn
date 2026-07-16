@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Settings — DayN-NetBox Bridge{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Settings</h1>
+
+  {% if message %}<div class="banner banner-info">{{ message }}</div>{% endif %}
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  {% if not admin_configured %}
+    <div class="banner banner-warn">
+      <strong>No admin password is set.</strong> This page is open to everyone until you
+      set one below.
+    </div>
+  {% endif %}
+
+  <form action="/settings" method="post" class="settings-form">
+    <h2>NetBox connection</h2>
+    <label>NetBox URL
+      <input type="url" name="netbox_url" value="{{ netbox_url }}"
+             placeholder="https://netbox.example.net">
+    </label>
+    <label>API token
+      <input type="password" name="netbox_token" value="" autocomplete="off"
+             placeholder="{% if token_set %}(unchanged — a token is stored){% else %}paste a read-only token{% endif %}">
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" name="netbox_verify_ssl" value="true"
+             {% if verify_ssl %}checked{% endif %}> Verify TLS certificate
+    </label>
+
+    <div class="settings-actions">
+      <button type="submit" class="btn btn-primary">Save settings</button>
+      <button type="button" class="btn btn-secondary"
+              hx-post="/settings/test" hx-target="#test-result"
+              hx-include="closest form">Test connection</button>
+      <span id="test-result"></span>
+    </div>
+
+    <h2>Admin account</h2>
+    {% if password_from_env %}
+      <p class="hint">The admin password comes from the <code>ADMIN_PASSWORD</code>
+         environment variable and cannot be changed here.</p>
+    {% endif %}
+    <label>Username
+      <input type="text" name="admin_username" value="{{ admin_username }}"
+             autocomplete="username">
+    </label>
+    {% if not password_from_env %}
+    <label>{% if admin_configured %}New password{% else %}Set admin password{% endif %}
+      <input type="password" name="new_password" value="" minlength="8"
+             autocomplete="new-password">
+    </label>
+    <label>Confirm password
+      <input type="password" name="new_password_confirm" value="" minlength="8"
+             autocomplete="new-password">
+    </label>
+    {% endif %}
+  </form>
+
+  <p class="hint">Values saved here override the environment configuration and are kept
+     in <code>data/runtime_settings.json</code> inside the container. The stored API
+     token is never shown again.</p>
+</section>
+{% endblock %}

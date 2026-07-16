@@ -11,6 +11,8 @@ WORKDIR /srv
 COPY --from=builder /install /usr/local
 COPY app/ app/
 COPY mappings.yaml ./
+# Writable directory for GUI-saved runtime settings (mount a volume to persist).
+RUN mkdir -p /srv/data && chown appuser:appuser /srv/data
 
 USER appuser
 EXPOSE 8070

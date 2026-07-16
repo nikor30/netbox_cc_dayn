@@ -170,10 +170,18 @@ class NetBoxClient:
         self._contacts[device_id] = result
         return result
 
+    def status(self) -> dict[str, Any]:
+        """NetBox /api/status/ payload; raises NetBoxError when unreachable."""
+        try:
+            result = self._api.status()
+        except Exception as exc:
+            raise NetBoxError(f"NetBox is not reachable: {exc}") from exc
+        return dict(result) if isinstance(result, dict) else {}
+
     def ping(self) -> bool:
         """Cheap reachability check for /healthz."""
         try:
-            self._api.status()
-        except Exception:
+            self.status()
+        except NetBoxError:
             return False
         return True

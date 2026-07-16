@@ -1,20 +1,23 @@
 """FastAPI application: upload -> review -> manual fill -> export."""
 
+import hmac
 import logging
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.dayn_csv import DayNCsvError, export, parse
 from app.mapper import load_mappings, map_document_block_results
 from app.matcher import DeviceMatch, match_devices
 from app.netbox_client import NetBoxClient, NetBoxError
+from app.runtime_settings import RuntimeSettings, hash_password, verify_password
 from app.store import SessionStore, UploadSession
 
 logger = logging.getLogger("app")
@@ -31,6 +34,47 @@ app = FastAPI(title="DayN-NetBox Bridge")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 store = SessionStore(ttl_seconds=settings.session_ttl_seconds)
+runtime = RuntimeSettings(Path(settings.runtime_settings_path))
+basic_auth = HTTPBasic(auto_error=False)
+
+
+def current_settings() -> Settings:
+    """Environment settings with GUI-saved overrides applied."""
+    return runtime.effective(settings)
+
+
+def _admin_configured() -> bool:
+    return bool(settings.admin_password or runtime.get("admin_password_hash"))
+
+
+def require_admin(
+    credentials: HTTPBasicCredentials | None = Depends(basic_auth),
+) -> None:
+    """Basic auth for the settings GUI.
+
+    Until an admin password exists (env or GUI) the page is open, so the
+    first visit can set one — the page shows a prominent warning.
+    """
+    if not _admin_configured():
+        return
+    expected_user = str(runtime.get("admin_username") or settings.admin_username)
+    unauthorized = HTTPException(
+        status_code=401,
+        detail="Admin login required.",
+        headers={"WWW-Authenticate": 'Basic realm="DayN-NetBox Bridge settings"'},
+    )
+    if credentials is None or credentials.username != expected_user:
+        raise unauthorized
+    stored_hash = runtime.get("admin_password_hash")
+    if settings.admin_password:
+        if not secrets_compare(credentials.password, settings.admin_password):
+            raise unauthorized
+    elif not (stored_hash and verify_password(credentials.password, str(stored_hash))):
+        raise unauthorized
+
+
+def secrets_compare(a: str, b: str) -> bool:
+    return hmac.compare_digest(a.encode(), b.encode())
 
 
 class UploadError(Exception):
@@ -118,7 +162,9 @@ def _view_model(session: UploadSession) -> dict[str, Any]:
         "empty_final": empty_final,
         "devices_not_found": not_found,
         "ambiguous_devices": ambiguous_devices,
-        "netbox_configured": bool(settings.netbox_url and settings.netbox_token),
+        "netbox_configured": bool(
+            current_settings().netbox_url and current_settings().netbox_token
+        ),
     }
 
 
@@ -155,7 +201,7 @@ async def fill(request: Request, upload_id: str) -> HTMLResponse:
     manual_values = _collect_manual_values(session)
     session.fill_error = ""
     try:
-        client = NetBoxClient(settings)
+        client = NetBoxClient(current_settings())
         session.matches = match_devices(session.document.device_names(), client)
         _apply_device_picks(session, form)
         client.prefetch_device_details(
@@ -257,10 +303,111 @@ def export_csv(upload_id: str) -> Response:
 
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
+    active = current_settings()
     netbox = "unconfigured"
-    if settings.netbox_url and settings.netbox_token:
+    if active.netbox_url and active.netbox_token:
         try:
-            netbox = "ok" if NetBoxClient(settings).ping() else "unreachable"
+            netbox = "ok" if NetBoxClient(active).ping() else "unreachable"
         except NetBoxError:
             netbox = "unreachable"
     return {"status": "ok", "netbox": netbox}
+
+
+def _settings_view(
+    request: Request,
+    message: str = "",
+    error: str = "",
+    status_code: int = 200,
+) -> HTMLResponse:
+    active = current_settings()
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {
+            "netbox_url": active.netbox_url,
+            "token_set": bool(active.netbox_token),
+            "verify_ssl": active.netbox_verify_ssl,
+            "admin_username": str(runtime.get("admin_username") or settings.admin_username),
+            "admin_configured": _admin_configured(),
+            "password_from_env": bool(settings.admin_password),
+            "message": message,
+            "error": error,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request, _: None = Depends(require_admin)) -> HTMLResponse:
+    return _settings_view(request)
+
+
+@app.post("/settings", response_class=HTMLResponse)
+def save_settings(
+    request: Request,
+    netbox_url: str = Form(""),
+    netbox_token: str = Form(""),
+    netbox_verify_ssl: bool = Form(False),
+    admin_username: str = Form(""),
+    new_password: str = Form(""),
+    new_password_confirm: str = Form(""),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    if new_password or new_password_confirm:
+        if settings.admin_password:
+            return _settings_view(
+                request,
+                error="The admin password is set via the ADMIN_PASSWORD environment "
+                "variable and cannot be changed here.",
+                status_code=400,
+            )
+        if new_password != new_password_confirm:
+            return _settings_view(request, error="Passwords do not match.", status_code=400)
+        if len(new_password) < 8:
+            return _settings_view(
+                request, error="Password must be at least 8 characters.", status_code=400
+            )
+
+    updates: dict[str, object] = {
+        "netbox_url": netbox_url.strip().rstrip("/"),
+        "netbox_verify_ssl": netbox_verify_ssl,
+    }
+    if netbox_token.strip():  # empty field means "keep the stored token"
+        updates["netbox_token"] = netbox_token.strip()
+    if admin_username.strip():
+        updates["admin_username"] = admin_username.strip()
+    if new_password and not settings.admin_password:
+        updates["admin_password_hash"] = hash_password(new_password)
+    runtime.save(**updates)
+    logger.info("settings updated (netbox_url=%s)", updates["netbox_url"])
+    message = "Settings saved."
+    if "admin_password_hash" in updates:
+        message = "Settings saved. Admin password set — the next request will ask you to log in."
+    return _settings_view(request, message=message)
+
+
+@app.post("/settings/test", response_class=HTMLResponse)
+def test_netbox_connection(
+    request: Request,
+    netbox_url: str = Form(""),
+    netbox_token: str = Form(""),
+    netbox_verify_ssl: bool = Form(False),
+    _: None = Depends(require_admin),
+) -> HTMLResponse:
+    """Test the connection with the form values (falling back to saved ones)."""
+    active = current_settings()
+    candidate = active.model_copy(
+        update={
+            "netbox_url": netbox_url.strip().rstrip("/") or active.netbox_url,
+            "netbox_token": netbox_token.strip() or active.netbox_token,
+            "netbox_verify_ssl": netbox_verify_ssl,
+        }
+    )
+    context: dict[str, object]
+    try:
+        status = NetBoxClient(candidate).status()
+        version = str(status.get("netbox-version") or "unknown version")
+        context = {"ok": True, "detail": f"Connected — NetBox {version}."}
+    except NetBoxError as exc:
+        context = {"ok": False, "detail": str(exc)}
+    return templates.TemplateResponse(request, "partials/test_result.html", context)
