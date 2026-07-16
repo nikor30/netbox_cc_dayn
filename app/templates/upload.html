@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Upload Day-N template CSV</h1>
+  <p>Upload a Cisco Catalyst Center Day-N bulk template export. The tool analyzes the
+     templates and variables, auto-fills what it can from NetBox, and lets you pre-fill
+     the rest before downloading the enriched CSV.</p>
+  {% if error %}<div class="banner banner-error">{{ error }}</div>{% endif %}
+  <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
+    <input type="file" name="file" accept=".csv,text/csv" required>
+    <button type="submit" class="btn btn-primary">Upload &amp; analyze</button>
+  </form>
+  <p class="hint">Maximum size: 2&nbsp;MB. The file is kept in memory only and discarded
+     after one hour.</p>
+</section>
+{% endblock %}

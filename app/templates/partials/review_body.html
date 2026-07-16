@@ -1,0 +1,122 @@
+<section class="card">
+  <h1>{{ session.filename }}</h1>
+
+  <div class="banner banner-info">
+    {{ counts.auto }} of {{ counts.total }} variables auto-filled,
+    {{ counts.manual }} manual,
+    {% if counts.conflict %}{{ counts.conflict }} conflicts,{% endif %}
+    {% if counts.ambiguous %}{{ counts.ambiguous }} ambiguous,{% endif %}
+    {{ devices_not_found }} device(s) not found in NetBox.
+    {% if empty_final %}
+      <strong class="warn">⚠ {{ empty_final }} variable(s) still empty.</strong>
+    {% endif %}
+  </div>
+
+  {% if session.fill_error %}
+    <div class="banner banner-error">
+      NetBox auto-fill failed: {{ session.fill_error }} — all variables stay manual.
+    </div>
+  {% elif not netbox_configured %}
+    <div class="banner banner-warn">
+      NetBox is not configured (NETBOX_URL / NETBOX_TOKEN) — auto-fill is unavailable,
+      everything is manual.
+    </div>
+  {% endif %}
+
+  <form hx-post="/review/{{ session.id }}/fill" hx-target="#review-body" class="fill-form">
+    {% if ambiguous_devices %}
+      <fieldset class="ambiguous-picker">
+        <legend>Ambiguous devices — pick the right NetBox device, then re-run auto-fill</legend>
+        {% for match in ambiguous_devices %}
+          {% set result = match.to_result() %}
+          <label>{{ match.name }}
+            <select name="device_pick_{{ match.name }}">
+              <option value="">— keep unresolved —</option>
+              {% for candidate in result.candidates %}
+                <option value="{{ candidate.id }}">{{ candidate.name }} (id {{ candidate.id }})</option>
+              {% endfor %}
+            </select>
+          </label>
+        {% endfor %}
+      </fieldset>
+    {% endif %}
+    <button type="submit" class="btn btn-primary">
+      {% if session.filled %}Re-run NetBox auto-fill{% else %}Run NetBox auto-fill{% endif %}
+    </button>
+    <a class="btn btn-secondary" href="/export/{{ session.id }}">Download enriched CSV</a>
+  </form>
+</section>
+
+{% for device in devices %}
+<section class="card device-card">
+  <h2 class="device-header">
+    {{ device.name }}
+    {% if device.match %}
+      {% set result = device.match.to_result() %}
+      {% if device.match.status == 'matched' %}
+        <span class="tag tag-ok">matched</span>
+        {% if result.netbox_url %}<a href="{{ result.netbox_url }}" target="_blank" rel="noopener">NetBox ↗</a>{% endif %}
+      {% elif device.match.status == 'ambiguous' %}
+        <span class="tag tag-warn">ambiguous</span>
+      {% elif device.match.status == 'netbox_unreachable' %}
+        <span class="tag tag-err">NetBox unreachable</span>
+      {% else %}
+        <span class="tag tag-err">not found</span>
+      {% endif %}
+    {% endif %}
+  </h2>
+
+  {% for blk in device.blocks %}
+  <h3 class="template-name" title="{{ blk.template }}">{{ blk.template_short }}</h3>
+  <div class="table-wrap">
+  <table class="vars">
+    <thead>
+      <tr><th>Variable</th><th>File value</th><th>NetBox value</th><th>Final value</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for variable, r in blk.results.items() %}
+      <tr>
+        <td class="mono">{{ variable }}</td>
+        <td class="mono">{{ r.file_value }}</td>
+        <td class="mono">
+          {% if r.netbox_value is not none %}
+            {% if r.netbox_object_url %}<a href="{{ r.netbox_object_url }}" target="_blank" rel="noopener">{{ r.netbox_value }}</a>
+            {% else %}{{ r.netbox_value }}{% endif %}
+          {% elif r.candidates %}
+            <em>{{ r.candidates|length }} candidates</em>
+          {% endif %}
+        </td>
+        <td>
+          <form hx-post="/review/{{ session.id }}/value" hx-target="#review-body" class="value-form">
+            <input type="hidden" name="block_index" value="{{ blk.index }}">
+            <input type="hidden" name="variable" value="{{ variable }}">
+            {% if r.candidates and r.manual_value is none %}
+              <select name="value">
+                <option value="">— pick —</option>
+                {% for candidate in r.candidates %}
+                  <option value="{{ candidate }}">{{ candidate }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              <input type="text" name="value" value="{{ r.final_value }}"
+                     aria-label="Final value for {{ variable }}">
+            {% endif %}
+            <label class="apply-all" title="Apply this value to every device that has {{ variable }}">
+              <input type="checkbox" name="apply_all" value="true"> all
+            </label>
+            <button type="submit" class="btn btn-small">Save</button>
+          </form>
+        </td>
+        <td>
+          <span class="tag tag-{{ 'ok' if r.status in ('auto', 'file') else ('warn' if r.status in ('conflict', 'ambiguous') else 'muted') }}">
+            {{ 'manual (set)' if r.manual_value is not none else r.status }}
+          </span>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% endfor %}
+</section>
+{% endfor %}

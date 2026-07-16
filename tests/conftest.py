@@ -1,6 +1,7 @@
 """Shared test helpers: HTTP-level NetBox mocking with `responses`."""
 
 import json
+import os
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -8,9 +9,16 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 import responses
 
-from app.config import Settings
-
 NETBOX_URL = "https://netbox.test"
+
+# The FastAPI app reads settings at import time; make sure tests always see a
+# configured (mock) NetBox regardless of the developer's environment.
+os.environ["NETBOX_URL"] = NETBOX_URL
+os.environ["NETBOX_TOKEN"] = "test-token"
+
+from app.config import Settings, get_settings  # noqa: E402
+
+get_settings.cache_clear()
 
 
 @pytest.fixture
