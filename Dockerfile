@@ -1,10 +1,8 @@
 FROM python:3.12-slim AS builder
 
 WORKDIR /build
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --prefix=/install \
-    fastapi==0.139.1 uvicorn==0.51.0 jinja2==3.1.6 pynetbox==7.8.0 \
-    pydantic==2.13.4 pydantic-settings==2.14.2 pyyaml==6.0.3 python-multipart==0.0.32
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 FROM python:3.12-slim
 

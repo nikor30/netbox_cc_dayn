@@ -1,0 +1,13 @@
+services:
+  dayn-bridge:
+    build: .
+    image: dayn-netbox-bridge:latest
+    ports:
+      - "8070:8070"
+    env_file:
+      - .env
+    restart: unless-stopped
+    # mappings.yaml is baked into the image; mount your own to extend the
+    # variable mapping without rebuilding:
+    # volumes:
+    #   - ./mappings.yaml:/srv/mappings.yaml:ro
