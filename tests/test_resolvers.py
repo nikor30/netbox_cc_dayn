@@ -12,6 +12,9 @@ from app.resolvers import (
     resolve_connected_device,
     resolve_dotted,
     resolve_primary_contact,
+    resolve_site_contact,
+    resolve_site_vlans,
+    resolve_uplink_ports,
 )
 from tests.conftest import NETBOX_URL
 
@@ -139,6 +142,144 @@ def test_primary_contact_falls_back_to_tenant(
     )
     device = fake_device(tenant=SimpleNamespace(name="Webasto IT"))
     assert resolve_primary_contact(NetBoxClient(settings), device).value == "Webasto IT"
+
+
+def _sited_device() -> SimpleNamespace:
+    return fake_device(site=SimpleNamespace(id=5, name="VEL"))
+
+
+def test_site_vlans_formatted_like_the_file(
+    settings: Settings, rsps: responses.RequestsMock
+) -> None:
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/ipam/vlans/",
+        json={
+            "count": 3,
+            "next": None,
+            "results": [
+                {"id": 1, "vid": 100, "name": "Medientechnik", "site": {"id": 5}},
+                {"id": 2, "vid": 99, "name": "Quarantine", "site": {"id": 5}},
+                {"id": 3, "vid": 102, "name": "GLT", "site": {"id": 5}},
+            ],
+        },
+    )
+    resolved = resolve_site_vlans(NetBoxClient(settings), _sited_device())
+    assert resolved.value == "(99,Quarantine);(100,Medientechnik);(102,GLT)"
+
+
+def test_site_vlans_no_site_or_no_vlans(
+    settings: Settings, rsps: responses.RequestsMock
+) -> None:
+    assert resolve_site_vlans(NetBoxClient(settings), fake_device()).value is None
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/ipam/vlans/",
+        json={"count": 0, "next": None, "results": []},
+    )
+    assert resolve_site_vlans(NetBoxClient(settings), _sited_device()).value is None
+
+
+def test_uplink_ports_from_cabled_interfaces(
+    settings: Settings, rsps: responses.RequestsMock
+) -> None:
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/dcim/interfaces/",
+        json={
+            "count": 2,
+            "next": None,
+            "results": [
+                {
+                    "id": 10,
+                    "name": "Te1/1/3",
+                    "device": {"id": 1, "name": "SVEL051CIS"},
+                    "connected_endpoints": [{"id": 1, "device": {"id": 9, "name": "SWV_1"}}],
+                },
+                {
+                    "id": 11,
+                    "name": "Te1/1/4",
+                    "device": {"id": 1, "name": "SVEL051CIS"},
+                    "connected_endpoints": [{"id": 2, "device": {"id": 8, "name": "SWV_2"}}],
+                },
+            ],
+        },
+    )
+    client = NetBoxClient(settings)
+    assert resolve_uplink_ports(client, fake_device()).value == "Te1/1/3,Te1/1/4"
+    # Same interface query also feeds the connected-device resolver: two
+    # distinct far ends -> ambiguous, no extra HTTP call.
+    resolved = resolve_connected_device(client, 1)
+    assert resolved.candidates == ["SWV_1", "SWV_2"]
+
+
+def _site_assignments(entries: list[tuple[str | None, str]]) -> dict[str, object]:
+    return {
+        "count": len(entries),
+        "next": None,
+        "results": [
+            {
+                "id": i,
+                "object_id": 5,
+                "role": {"id": 1, "name": role} if role else None,
+                "contact": {"id": 100 + i, "name": name},
+            }
+            for i, (role, name) in enumerate(entries)
+        ],
+    }
+
+
+def test_site_contact_picks_matching_role(
+    settings: Settings, rsps: responses.RequestsMock
+) -> None:
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/tenancy/contact-assignments/",
+        json=_site_assignments(
+            [("Site Manager", "Somebody Else"), ("Local IT", "Ladislav Fekete")]
+        ),
+    )
+    resolved = resolve_site_contact(NetBoxClient(settings), _sited_device(), "Local IT")
+    assert resolved.value == "Ladislav Fekete"
+
+
+def test_site_contact_role_case_insensitive(
+    settings: Settings, rsps: responses.RequestsMock
+) -> None:
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/tenancy/contact-assignments/",
+        json=_site_assignments([("local it", "Ladislav Fekete")]),
+    )
+    resolved = resolve_site_contact(NetBoxClient(settings), _sited_device(), "Local IT")
+    assert resolved.value == "Ladislav Fekete"
+
+
+def test_site_contact_multiple_matches_ambiguous(
+    settings: Settings, rsps: responses.RequestsMock
+) -> None:
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/tenancy/contact-assignments/",
+        json=_site_assignments([("Local IT", "Person A"), ("Local IT", "Person B")]),
+    )
+    resolved = resolve_site_contact(NetBoxClient(settings), _sited_device(), "Local IT")
+    assert resolved.is_ambiguous
+    assert resolved.candidates == ["Person A", "Person B"]
+
+
+def test_site_contact_falls_back_to_tenant(
+    settings: Settings, rsps: responses.RequestsMock
+) -> None:
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/tenancy/contact-assignments/",
+        json={"count": 0, "next": None, "results": []},
+    )
+    device = _sited_device()
+    device.tenant = SimpleNamespace(name="Webasto IT")
+    resolved = resolve_site_contact(NetBoxClient(settings), device, "Local IT")
+    assert resolved.value == "Webasto IT"
 
 
 def test_resolve_dispatch(settings: Settings, rsps: responses.RequestsMock) -> None:

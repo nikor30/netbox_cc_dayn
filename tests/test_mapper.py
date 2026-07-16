@@ -32,7 +32,7 @@ def full_device() -> SimpleNamespace:
         id=1,
         name="SVEL051CIS",
         url=f"{NETBOX_URL}/api/dcim/devices/1/",
-        site=SimpleNamespace(name="Velizy"),
+        site=SimpleNamespace(id=5, name="Velizy"),
         location=SimpleNamespace(name="Building A / Room 12"),
         rack=SimpleNamespace(name="R042"),
         role=SimpleNamespace(name="access-switch"),
@@ -51,6 +51,9 @@ def test_load_default_mappings() -> None:
     assert mappings["site_full_name"] == "device.site.name"
     assert mappings["patch_field"] is None
     assert mappings["uplink_switch"] == "connected_device"
+    assert mappings["support_contact"] == "site_contact:Local IT"
+    assert mappings["arrVLANs"] == "site_vlans"
+    assert mappings["uplink_ports"] == "uplink_ports"
 
 
 def test_load_mappings_rejects_bad_yaml(tmp_path: Path) -> None:
@@ -80,6 +83,11 @@ def test_every_default_mapping_resolves_or_degrades(
         f"{NETBOX_URL}/api/dcim/interfaces/",
         json={"count": 0, "next": None, "results": []},
     )
+    rsps.add(
+        responses.GET,
+        f"{NETBOX_URL}/api/ipam/vlans/",
+        json={"count": 0, "next": None, "results": []},
+    )
     mappings = load_mappings()
     block = make_block(list(mappings.keys()))
     match = DeviceMatch(name=FQDN, status="matched", record=full_device())
@@ -93,6 +101,8 @@ def test_every_default_mapping_resolves_or_degrades(
     assert results["asset_id"].netbox_value == "WEB-0042"
     assert results["support_contact"].netbox_value == "Webasto IT"  # tenant fallback
     assert results["uplink_switch"].status == "missing"  # no cables -> manual input
+    assert results["uplink_ports"].status == "missing"  # no cables -> manual input
+    assert results["arrVLANs"].status == "missing"  # site has no VLANs -> manual input
     assert results["patch_field"].status == "manual"  # source: null
 
 

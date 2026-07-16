@@ -204,12 +204,20 @@ async def fill(request: Request, upload_id: str) -> HTMLResponse:
         client = NetBoxClient(current_settings())
         session.matches = match_devices(session.document.device_names(), client)
         _apply_device_picks(session, form)
-        client.prefetch_device_details(
-            [
-                int(m.record.id)
-                for m in session.matches.values()
-                if m.status == "matched" and m.record is not None
-            ]
+        matched_records = [
+            m.record
+            for m in session.matches.values()
+            if m.status == "matched" and m.record is not None
+        ]
+        client.prefetch_device_details([int(r.id) for r in matched_records])
+        client.prefetch_site_details(
+            sorted(
+                {
+                    site_id
+                    for r in matched_records
+                    if (site_id := _record_site_id(r)) is not None
+                }
+            )
         )
         session.block_results = map_document_block_results(
             session.document.blocks, session.matches, load_mappings(), client
@@ -228,6 +236,13 @@ async def fill(request: Request, upload_id: str) -> HTMLResponse:
         sum(1 for m in session.matches.values() if m.status == "matched"),
     )
     return templates.TemplateResponse(request, "partials/review_body.html", _view_model(session))
+
+
+def _record_site_id(record: object) -> int | None:
+    data = getattr(record, "__dict__", {})
+    site = data.get("site")
+    raw = getattr(site, "__dict__", {}).get("id") if site is not None else None
+    return int(raw) if raw is not None else None
 
 
 def _collect_manual_values(session: UploadSession) -> dict[tuple[int, str], str]:

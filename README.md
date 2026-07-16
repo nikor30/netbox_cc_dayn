@@ -80,8 +80,15 @@ rack_id:
   source: device.rack.name        # dotted path; any None on the way -> manual
 uplink_switch:
   source: connected_device        # special: far end of the device's cabling
+uplink_ports:
+  source: uplink_ports            # special: local names of the cabled
+                                  # interfaces, e.g. "Te1/1/3,Te1/1/4"
+arrVLANs:
+  source: site_vlans              # special: every VLAN of the device's site,
+                                  # formatted "(99,Quarantine);(100,Medientechnik);..."
 support_contact:
-  source: device.primary_contact  # special: contact assignment, else tenant name
+  source: site_contact:Local IT   # special: site contact with that role;
+                                  # falls back to device contact, then tenant name
 patch_field:
   source: null                    # no NetBox source -> always manual
 ```

@@ -18,8 +18,13 @@ device_role:
 asset_id:
   source: device.asset_tag
 support_contact:
-  source: device.primary_contact      # contact assignments; else tenant.name
+  source: site_contact:Local IT       # site contact with role "Local IT";
+                                      # falls back to device contact, then tenant.name
 uplink_switch:
   source: connected_device            # trace cables on uplinked interfaces
+uplink_ports:
+  source: uplink_ports                # local names of the cabled interfaces, e.g. Te1/1/3,Te1/1/4
+arrVLANs:
+  source: site_vlans                  # all VLANs of the device's site: (vid,name);(vid,name);...
 patch_field:
   source: null                        # no NetBox source known yet -> always manual

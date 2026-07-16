@@ -39,6 +39,17 @@ def _record_dict(record: Any) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _assignment_entry(data: dict[str, Any]) -> tuple[str | None, str] | None:
+    """(role name, contact name) from a contact-assignment record, if usable."""
+    contact = data.get("contact")
+    contact_name = _record_dict(contact).get("name") if contact is not None else None
+    if not contact_name:
+        return None
+    role = data.get("role")
+    role_name = _record_dict(role).get("name") if role is not None else None
+    return (str(role_name) if role_name else None, str(contact_name))
+
+
 def _far_end_names(iface: Any) -> list[str]:
     names: list[str] = []
     for endpoint in _record_dict(iface).get("connected_endpoints") or []:
@@ -57,7 +68,10 @@ class NetBoxClient:
         self._api.http_session.verify = settings.netbox_verify_ssl
         self._cache: dict[str, list[Any]] = {}
         self._connected: dict[int, list[str]] = {}
+        self._uplink_ports: dict[int, list[str]] = {}
         self._contacts: dict[int, str | None] = {}
+        self._site_vlans: dict[int, list[tuple[int, str]]] = {}
+        self._site_contacts: dict[int, list[tuple[str | None, str]]] = {}
 
     def _filter_devices(self, cache_key: str, **params: Any) -> list[Any]:
         if cache_key in self._cache:
@@ -99,17 +113,7 @@ class NetBoxClient:
             return
         try:
             interfaces = list(self._api.dcim.interfaces.filter(device_id=device_ids, cabled=True))
-            connected: dict[int, list[str]] = {device_id: [] for device_id in device_ids}
-            for iface in interfaces:
-                owner = _record_dict(iface).get("device")
-                owner_id = _record_dict(owner).get("id") if owner is not None else None
-                if owner_id is None:
-                    continue
-                names = connected.setdefault(int(owner_id), [])
-                for name in _far_end_names(iface):
-                    if name not in names:
-                        names.append(name)
-            self._connected.update(connected)
+            self._ingest_interfaces(interfaces, device_ids)
 
             assignments = list(
                 self._api.tenancy.contact_assignments.filter(
@@ -132,21 +136,131 @@ class NetBoxClient:
         except (requests.RequestException, pynetbox.RequestError) as exc:
             logger.warning("netbox prefetch failed, falling back to per-device: %s", exc)
 
-    def connected_device_names(self, device_id: int) -> list[str]:
-        """Far-end device names of all cabled interfaces of a device."""
-        if device_id in self._connected:
-            return self._connected[device_id]
+    def _ingest_interfaces(
+        self, interfaces: list[Any], device_ids: list[int], default_owner: int | None = None
+    ) -> None:
+        """Fill the connected-device and uplink-port caches from interface records.
+
+        ``default_owner`` attributes interfaces without a device field to the
+        single device a per-device query was made for.
+        """
+        connected: dict[int, list[str]] = {device_id: [] for device_id in device_ids}
+        uplinks: dict[int, list[str]] = {device_id: [] for device_id in device_ids}
+        for iface in interfaces:
+            data = _record_dict(iface)
+            owner = data.get("device")
+            owner_id = _record_dict(owner).get("id") if owner is not None else None
+            if owner_id is None:
+                owner_id = default_owner
+            if owner_id is None:
+                continue
+            far_ends = _far_end_names(iface)
+            names = connected.setdefault(int(owner_id), [])
+            for name in far_ends:
+                if name not in names:
+                    names.append(name)
+            iface_name = data.get("name")
+            ports = uplinks.setdefault(int(owner_id), [])
+            if far_ends and iface_name and str(iface_name) not in ports:
+                ports.append(str(iface_name))
+        self._connected.update(connected)
+        self._uplink_ports.update(uplinks)
+
+    def _fetch_device_interfaces(self, device_id: int) -> None:
         try:
             interfaces = list(self._api.dcim.interfaces.filter(device_id=device_id, cabled=True))
         except (requests.RequestException, pynetbox.RequestError) as exc:
             raise NetBoxError(f"NetBox interface query failed: {exc}") from exc
-        names: list[str] = []
-        for iface in interfaces:
-            for name in _far_end_names(iface):
-                if name not in names:
-                    names.append(name)
-        self._connected[device_id] = names
-        return names
+        self._ingest_interfaces(interfaces, [device_id], default_owner=device_id)
+
+    def connected_device_names(self, device_id: int) -> list[str]:
+        """Far-end device names of all cabled interfaces of a device."""
+        if device_id not in self._connected:
+            self._fetch_device_interfaces(device_id)
+        return self._connected[device_id]
+
+    def uplink_port_names(self, device_id: int) -> list[str]:
+        """Local names of the device's cabled (uplink) interfaces."""
+        if device_id not in self._uplink_ports:
+            self._fetch_device_interfaces(device_id)
+        return self._uplink_ports[device_id]
+
+    def prefetch_site_details(self, site_ids: list[int]) -> None:
+        """Warm the site VLAN and site contact caches with one query each."""
+        if not site_ids:
+            return
+        try:
+            vlans = list(self._api.ipam.vlans.filter(site_id=site_ids))
+            grouped: dict[int, list[tuple[int, str]]] = {site_id: [] for site_id in site_ids}
+            for vlan in vlans:
+                data = _record_dict(vlan)
+                site = data.get("site")
+                site_id = _record_dict(site).get("id") if site is not None else None
+                vid = data.get("vid")
+                if site_id is None or vid is None:
+                    continue
+                grouped.setdefault(int(site_id), []).append(
+                    (int(vid), str(data.get("name") or ""))
+                )
+            for entries in grouped.values():
+                entries.sort(key=lambda item: item[0])
+            self._site_vlans.update(grouped)
+
+            assignments = list(
+                self._api.tenancy.contact_assignments.filter(
+                    object_type="dcim.site", object_id=site_ids
+                )
+            )
+            contacts: dict[int, list[tuple[str | None, str]]] = {
+                site_id: [] for site_id in site_ids
+            }
+            for assignment in assignments:
+                data = _record_dict(assignment)
+                object_id = data.get("object_id")
+                entry = _assignment_entry(data)
+                if object_id is not None and entry is not None:
+                    contacts.setdefault(int(object_id), []).append(entry)
+            self._site_contacts.update(contacts)
+        except (requests.RequestException, pynetbox.RequestError) as exc:
+            logger.warning("netbox site prefetch failed, falling back to per-site: %s", exc)
+
+    def site_vlans(self, site_id: int) -> list[tuple[int, str]]:
+        """(vid, name) of every VLAN scoped to a site, sorted by VID."""
+        if site_id in self._site_vlans:
+            return self._site_vlans[site_id]
+        try:
+            vlans = list(self._api.ipam.vlans.filter(site_id=site_id))
+        except (requests.RequestException, pynetbox.RequestError) as exc:
+            raise NetBoxError(f"NetBox VLAN query failed: {exc}") from exc
+        entries: list[tuple[int, str]] = []
+        for vlan in vlans:
+            data = _record_dict(vlan)
+            vid = data.get("vid")
+            if vid is not None:
+                entries.append((int(vid), str(data.get("name") or "")))
+        entries.sort(key=lambda item: item[0])
+        self._site_vlans[site_id] = entries
+        return entries
+
+    def site_contacts(self, site_id: int) -> list[tuple[str | None, str]]:
+        """(role name, contact name) of every contact assigned to a site."""
+        if site_id in self._site_contacts:
+            return self._site_contacts[site_id]
+        try:
+            assignments = list(
+                self._api.tenancy.contact_assignments.filter(
+                    object_type="dcim.site", object_id=site_id
+                )
+            )
+        except (requests.RequestException, pynetbox.RequestError) as exc:
+            raise NetBoxError(f"NetBox site contact query failed: {exc}") from exc
+        entries = [
+            entry
+            for assignment in assignments
+            if (entry := _assignment_entry(_record_dict(assignment))) is not None
+        ]
+        self._site_contacts[site_id] = entries
+        return entries
 
     def primary_contact(self, device_id: int) -> str | None:
         """First contact assigned to the device, if any."""

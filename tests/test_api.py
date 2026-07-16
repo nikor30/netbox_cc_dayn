@@ -61,10 +61,42 @@ def install_netbox(rsps: responses.RequestsMock) -> None:
             ],
         },
     )
+    def contacts_cb(request: object) -> tuple[int, dict[str, str], str]:
+        from urllib.parse import parse_qs, urlsplit
+
+        params = parse_qs(urlsplit(request.url).query)  # type: ignore[attr-defined]
+        results = []
+        if params.get("object_type") == ["dcim.site"]:
+            results = [
+                {
+                    "id": 1,
+                    "object_id": 1,
+                    "role": {"id": 1, "name": "Local IT"},
+                    "contact": {"id": 3, "name": "Ladislav Fekete"},
+                }
+            ]
+        import json
+
+        return (
+            200,
+            {"Content-Type": "application/json"},
+            json.dumps({"count": len(results), "next": None, "results": results}),
+        )
+
+    rsps.add_callback(
+        responses.GET, f"{NETBOX_URL}/api/tenancy/contact-assignments/", callback=contacts_cb
+    )
     rsps.add(
         responses.GET,
-        f"{NETBOX_URL}/api/tenancy/contact-assignments/",
-        json={"count": 0, "next": None, "results": []},
+        f"{NETBOX_URL}/api/ipam/vlans/",
+        json={
+            "count": 2,
+            "next": None,
+            "results": [
+                {"id": 1, "vid": 99, "name": "Quarantine", "site": {"id": 1}},
+                {"id": 2, "vid": 100, "name": "Medientechnik", "site": {"id": 1}},
+            ],
+        },
     )
 
 
@@ -140,6 +172,8 @@ def test_full_journey_fill_manual_export(
 
     body = response.content
     assert b'"Velizy"' in body  # NetBox auto-fill
+    assert b'"Ladislav Fekete"' in body  # site contact with role "Local IT"
+    assert b'"(99,Quarantine);(100,Medientechnik)"' in body  # site VLANs
     assert b'"42"' in body  # manual value
     assert body.count(b'"PF-07"') == 2  # applied to both devices
     # File values are never overwritten (uplink block was fully set in the file).

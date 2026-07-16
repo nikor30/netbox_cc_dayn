@@ -67,8 +67,9 @@ def test_200_devices_batched_and_fast(
     fill_seconds = time.perf_counter() - start
     assert fill.status_code == 200
 
-    # One devices query + one interfaces prefetch + one contacts prefetch.
-    assert fake.request_count <= 3, f"expected batched queries, saw {fake.request_count}"
+    # One devices query + batched prefetches for interfaces, device contacts,
+    # site VLANs and site contacts.
+    assert fake.request_count <= 5, f"expected batched queries, saw {fake.request_count}"
 
     start = time.perf_counter()
     review = client.get(f"/review/{upload_id}")

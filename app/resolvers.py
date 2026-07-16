@@ -7,6 +7,9 @@ from app.netbox_client import NetBoxClient, NetBoxError
 
 CONNECTED_DEVICE = "connected_device"
 PRIMARY_CONTACT = "device.primary_contact"
+SITE_VLANS = "site_vlans"
+UPLINK_PORTS = "uplink_ports"
+SITE_CONTACT = "site_contact"
 
 
 @dataclass
@@ -85,6 +88,65 @@ def resolve_primary_contact(client: NetBoxClient, record: Any) -> Resolved:
     return resolve_dotted(record, "device.tenant.name")
 
 
+def _site_id(record: Any) -> int | None:
+    site = _attr(record, "site")
+    raw = _attr(site, "id") if site is not None else None
+    return int(raw) if raw is not None else None
+
+
+def resolve_site_vlans(client: NetBoxClient, record: Any) -> Resolved:
+    """All VLANs of the device's site as ``(vid,name);(vid,name);...``."""
+    site_id = _site_id(record)
+    if site_id is None:
+        return Resolved()
+    try:
+        vlans = client.site_vlans(site_id)
+    except NetBoxError:
+        return Resolved()
+    if not vlans:
+        return Resolved()
+    return Resolved(value=";".join(f"({vid},{name})" for vid, name in vlans))
+
+
+def resolve_uplink_ports(client: NetBoxClient, record: Any) -> Resolved:
+    """Local names of the device's cabled interfaces, comma-joined."""
+    device_id = _attr(record, "id")
+    if device_id is None:
+        return Resolved()
+    try:
+        ports = client.uplink_port_names(int(device_id))
+    except NetBoxError:
+        return Resolved()
+    if not ports:
+        return Resolved()
+    return Resolved(value=",".join(ports))
+
+
+def resolve_site_contact(client: NetBoxClient, record: Any, role: str | None) -> Resolved:
+    """Site contact with the given role (e.g. "Local IT").
+
+    Falls back to the device's own contact assignment, then the tenant name.
+    """
+    site_id = _site_id(record)
+    if site_id is not None:
+        try:
+            contacts = client.site_contacts(site_id)
+        except NetBoxError:
+            contacts = []
+        hits: list[str] = []
+        for contact_role, name in contacts:
+            role_matches = role is None or (
+                contact_role is not None and contact_role.lower() == role.lower()
+            )
+            if role_matches and name not in hits:
+                hits.append(name)
+        if len(hits) == 1:
+            return Resolved(value=hits[0])
+        if len(hits) > 1:
+            return Resolved(candidates=hits)
+    return resolve_primary_contact(client, record)
+
+
 def resolve(source: str, record: Any, client: NetBoxClient) -> Resolved:
     """Dispatch a mapping source string to the right resolver."""
     if source == CONNECTED_DEVICE:
@@ -94,4 +156,11 @@ def resolve(source: str, record: Any, client: NetBoxClient) -> Resolved:
         return resolve_connected_device(client, int(device_id))
     if source == PRIMARY_CONTACT:
         return resolve_primary_contact(client, record)
+    if source == SITE_VLANS:
+        return resolve_site_vlans(client, record)
+    if source == UPLINK_PORTS:
+        return resolve_uplink_ports(client, record)
+    if source == SITE_CONTACT or source.startswith(SITE_CONTACT + ":"):
+        role = source.partition(":")[2].strip() or None
+        return resolve_site_contact(client, record, role)
     return resolve_dotted(record, source)

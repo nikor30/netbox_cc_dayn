@@ -81,6 +81,9 @@ class FakeNetBox:
                 f"{NETBOX_URL}/api/tenancy/contact-assignments/",
                 callback=self._empty_cb,
             )
+            rsps.add_callback(
+                responses.GET, f"{NETBOX_URL}/api/ipam/vlans/", callback=self._empty_cb
+            )
         rsps.add(responses.GET, f"{NETBOX_URL}/api/", json={}, headers={"API-Version": "4.1"})
 
     def _empty_cb(self, request: Any) -> tuple[int, dict[str, str], str]:
