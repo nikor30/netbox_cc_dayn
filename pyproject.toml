@@ -1,6 +1,6 @@
 [project]
 name = "netbox-cc-dayn"
-version = "0.1.0"
+version = "1.0.0"
 description = "DayN-NetBox Bridge: enrich Cisco Catalyst Center Day-N template CSVs from NetBox"
 requires-python = ">=3.12"
 dependencies = [
